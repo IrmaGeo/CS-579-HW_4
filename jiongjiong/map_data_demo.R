@@ -25,7 +25,7 @@ getwd()
 # Download steps:
 #     1. Select community
 #     2. Click "Export" button
-#     3. export as shapefile.
+#     3. Export as shapefile.
 chi_ca_file <- here::here("Boundaries_CommunityAreas_20251004/geo_export_2f67acac-76d9-47a1-9c12-fcf8534da850.shp")
 
 file.exists(chi_ca_file)
