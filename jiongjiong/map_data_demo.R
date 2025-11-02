@@ -23,9 +23,9 @@ getwd()
 
 # Data is downloaded from: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Community-Areas-current-/cauq-8yn6
 # Download steps:
-#     1. Select community
-#     2. Click "Export" button
-#     3. Export as shapefile.
+#     1. Click "Export" button
+#     2. Export as shapefile.
+#     3. Unzip the download zip file.
 chi_ca_file <- here::here("Boundaries_CommunityAreas_20251004/geo_export_2f67acac-76d9-47a1-9c12-fcf8534da850.shp")
 
 file.exists(chi_ca_file)
@@ -44,8 +44,8 @@ nrow(chi_ca_proj_sf)
 
 head(chi_ca_proj_sf)
 
-ggplot(chi_ca_proj_sf) + 
-    geom_sf() + 
+ggplot(chi_ca_proj_sf) +
+    geom_sf() +
     labs(title = "Chicago Community Areas NAD83")
 
 # community_names <- c("WEST GARFIELD PARK", "EAST GARFIELD PARK")
