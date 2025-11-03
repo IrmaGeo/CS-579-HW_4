@@ -262,7 +262,8 @@ generate_images <- function(history, data_type) {
             data <- data_info$data
             # print(paste("Variable:", data_info$variable_name,
             #             "Year:", year))
-            title <- paste(description, 'in', year)
+            # title <- paste(description, 'in', year)
+            title <- paste(year)
 
             # Only last plot shows legend
             show_legend <- ifelse(data_info_idx == length(data_info_list), TRUE, FALSE)
@@ -286,8 +287,14 @@ generate_images <- function(history, data_type) {
                 ggtitle(title) +
                 theme_minimal() +
                 theme(
-                axis.text = element_blank(),
-                axis.ticks = element_blank()
+                    axis.text = element_blank(),
+                    axis.ticks = element_blank(),
+                    plot.title = element_text(
+                        hjust = 0.5,    # center horizontally
+                        face = "plain", # optional: remove bold,
+                    ),
+                    panel.background = element_rect(fill = "white", color = NA),    # remove panel border
+                    plot.background  = element_rect(fill = "white", color = NA),    # remove surrounding border
                 )
 
             # Add plot to list
@@ -303,21 +310,25 @@ generate_images <- function(history, data_type) {
                                     guides = "collect") +
             plot_annotation(
                 title = paste(str_to_title(community_names_str),
-                    category_name,
-                    "in",
-                    paste(years, collapse = " vs ")),
+                    description,
+                    "Comparison"
+                    # "in", paste(years, collapse = " vs ")
+                    ),
                 theme = theme(
                     plot.title = element_text(
                         hjust = 0.5,       # center horizontally
                         face = "plain",    # remove bold
                         size = 14
-                    )
+                    ),
+                    panel.background = element_rect(fill = "white", color = NA),    # remove gray/black panel background
+                    plot.background  = element_rect(fill = "white", color = NA)  # remove surrounding background
                 )
-            ) +
-            theme(
-                panel.background = element_rect(fill = "white"),    # remove gray/black panel background
-                plot.background  = element_rect(fill = "white", color = NA)  # remove surrounding background
             )
+            # +
+            # theme(
+            #     panel.background = element_rect(fill = "white", color = NA),    # remove gray/black panel background
+            #     plot.background  = element_rect(fill = "white", color = NA)  # remove surrounding background
+            # )
 
         # Save as PNG
         file_stem <- paste(data_type,
