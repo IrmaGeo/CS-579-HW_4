@@ -22,8 +22,17 @@ library(tidycensus)
 library(tidyverse)
 library(tigris)
 library(patchwork)
+library(yaml)
+library(tibble)
+
+options(tigris_use_cache = TRUE)
 
 getwd()
+
+config_file_path <- file.path(getwd(), 'config.yaml')
+stopifnot(file.exists(config_file_path))
+config <- yaml::read_yaml(config_file_path)
+
 
 census_api_key_file_path <- file.path(getwd(), 'census_api_key.txt')
 
@@ -84,54 +93,267 @@ ggplot(community_sf) +
     labs(title = paste("Community Areas:", community_names_str))
 
 
+
 # 1 H1_001N " !!Total:" OCCUPANCY STATUS
 # P1_001N !!Total: RACE
-vars_pl_2020 = load_variables(2020, "pl")
+vars_pl_2020 = load_variables(2020, "pl", cache=TRUE)
 # PCT023001 Total RACE
 # H003001 Total OCCUPANCY STATUS
 # P008001 Total RACE
-vars_sf1_2010 = load_variables(2010, "sf1")
-vars_sf2_2010 = load_variables(2010, "sf2")
+vars_sf1_2010 = load_variables(2010, "sf1", cache=TRUE)
+vars_sf2_2010 = load_variables(2010, "sf2", cache=TRUE)
 
-write.csv(vars_pl_2020, file.path(getwd(),"vars_pl_2020.csv"))
+# write.csv(vars_pl_2020, file.path(getwd(),"vars_pl_2020.csv"))
 
-write.csv(vars_sf1_2010, file.path(getwd(),"vars_sf1_2010.csv"))
+# write.csv(vars_sf1_2010, file.path(getwd(),"vars_sf1_2010.csv"))
 
-write.csv(vars_sf2_2010, file.path(getwd(),"vars_sf2_2010.csv"))
+# write.csv(vars_sf2_2010, file.path(getwd(),"vars_sf2_2010.csv"))
 
 common_decennial_vars = inner_join(vars_pl_2020, vars_sf1_2010, by="concept", relationship = "many-to-many")
 
 
-block_race_populations_2020 <- get_decennial(
-  geography = "block",
-  variables = "P1_001N",  # Total population (PL94-171)
-  year      = 2020,
-  state     = "IL",
-  county    = "Cook",
-  geometry  = TRUE         # Include shapefile for mapping
-)
+# Grow block groups until reaching at least min_n
+grow_block_groups <- function(curr_block_groups,
+                              all_block_groups,
+                              min_n = 60) {
+  curr_bg <- curr_block_groups
+  all_bg <- all_block_groups
+
+  while (nrow(curr_bg) < min_n) {
+    # print(nrow(curr_bg))
+    # Replace curr_bg with all blocks that intersect the current selection
+    curr_bg <- all_bg[lengths(st_intersects(all_bg, curr_bg)) > 0, ]
+
+    # Stop if we reached min_n
+    if (nrow(curr_bg) >= min_n) break
+  }
+
+  return(curr_bg)
+}
+
+get_decennial_data <- function(config, community_sf) {
+    decennial_config <- config$history$decennial
+    geography_unit <- decennial_config$geography_unit
+    categories <- decennial_config$categories
+
+    results_list <- list()
+
+    for (category_idx in seq_along(categories)) {
+        category_info <- decennial_config$categories[[category_idx]]
+        variables <- category_info$variables
+
+        category_results <- list()
+
+        for (variable_idx in seq_along(variables)) {
+            variable <- variables[[variable_idx]]
+            variable_name <- variable$variable_name
+            year <- variable$year
+            raw_data <- get_decennial(
+                geography   = geography_unit,
+                variables   = variable_name,
+                year        = year,
+                state       = "IL",
+                county      = "Cook",
+                # Include shapefile for mapping
+                geometry    = TRUE,
+                cache_table = TRUE
+            )
+
+            is_intersect <- st_intersects(raw_data, community_sf)
+            data <- raw_data[lengths(is_intersect) > 0, ]
+
+            # Store result for this variable
+            category_results[[length(category_results) + 1]] <- list(
+                variable_idx   = variable_idx,
+                variable_name  = variable_name,
+                year           = year,
+                data           = data
+            )
+        }
+
+        results_list[[length(results_list) + 1]] <- list(
+            category_idx     = category_idx,
+            category_name    = category_info$category_name,
+            description      = category_info$description,
+            category_results = category_results
+        )
+    }
+
+    return(results_list)
+}
+
+
+get_acs_data <- function(config, community_sf) {
+    acs_config <- config$history$acs
+    geography_unit <- acs_config$geography_unit
+    survey <- acs_config$survey
+    categories <- acs_config$categories
+
+    results_list <- list()
+
+    for (category_idx in seq_along(categories)) {
+        category_info <- acs_config$categories[[category_idx]]
+        variables <- category_info$variables
+
+        category_results <- list()
+
+        for (variable_idx in seq_along(variables)) {
+            variable <- variables[[variable_idx]]
+            variable_name <- variable$variable_name
+            year <- variable$year
+
+            # print(paste("Variable:", variable_name,
+            #             "Year:", year))
+
+            raw_data <- get_acs(
+                geography = geography_unit,
+                variables = variable_name,
+                year      = year,
+                state     = "IL",
+                county    = "Cook",
+                # Include shapefile for mapping
+                geometry  = TRUE,
+                survey = survey
+            )
+
+            is_intersect <- st_intersects(raw_data, community_sf)
+            filtered_data <- raw_data[lengths(is_intersect) > 0, ]
+
+            data = grow_block_groups(filtered_data, raw_data)
+
+            # Store result for this variable
+            category_results[[length(category_results) + 1]] <- list(
+                variable_idx   = variable_idx,
+                variable_name  = variable_name,
+                year           = year,
+                data           = data
+            )
+        }
+
+        results_list[[length(results_list) + 1]] <- list(
+            category_idx     = category_idx,
+            category_name    = category_info$category_name,
+            description      = category_info$description,
+            category_results = category_results
+        )
+    }
+
+    return(results_list)
+}
+
+
+generate_images <- function(history, data_type) {
+    for (category_results_info in history) {
+        category_name <- category_results_info$category_name
+        description <- category_results_info$description
+        data_info_list <- category_results_info$category_results
+
+        years <- c()             # Initialize empty vector
+        plot_images <- list()    # Store plots
+
+        for (data_info in data_info_list) {
+            year <- data_info$year
+            data <- data_info$data
+            # print(paste("Variable:", data_info$variable_name,
+            #             "Year:", year))
+            title <- paste(description, 'in', year)
+
+            data$fill_value <- if (data_type == "decennial") data$value else data$estimate
+
+            plot_image <- ggplot() +
+                geom_sf(data = data, aes(fill = fill_value), color = NA) +
+                geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+                # scale_fill_viridis_c(name = category_name, option = "plasma") +
+                # scale_fill_gradient(name = category_name,
+                #                     low = "green", high = "yellow") +
+                scale_fill_distiller(name=category_name, palette = "YlGn", direction = -1) +
+                ggtitle(title) +
+                theme_minimal() +
+                theme(
+                axis.text = element_blank(),
+                axis.ticks = element_blank()
+                )
+
+            # Add plot to list
+            plot_images[[length(plot_images) + 1]] <- plot_image
+
+            # Add year to years vector
+            years <- c(years, data_info$year)
+        }
+
+        # Horizontal combine
+        combined_plot <- wrap_plots(plot_images, ncol = length(plot_images)) +
+            plot_annotation(
+                title = paste(str_to_title(community_names_str),
+                    category_name,
+                    "in",
+                    paste(years, collapse = " vs ")),
+                theme = theme(
+                    plot.title = element_text(
+                        hjust = 0.5,       # center horizontally
+                        face = "plain",    # remove bold
+                        size = 14
+                    )
+                )
+            ) +
+            theme(
+                panel.background = element_rect(fill = "white"),    # remove gray/black panel background
+                plot.background  = element_rect(fill = "white", color = NA)  # remove surrounding background
+            )
+
+        # Save as PNG
+        file_stem <- paste(data_type,
+                           gsub(" ", "_", tolower(category_name)),
+                           paste(years, collapse = "_"),
+                           sep="_")
+        file_name <- paste0(file_stem, ".png")
+
+        ggsave(file.path(getwd(), file_name),
+               combined_plot,
+               width = 10, height = 3, dpi = 300)
+    }
+}
+
+decennial_history <- get_decennial_data(config, community_sf)
+generate_images(decennial_history, 'decennial')
+
+acs_history <- get_acs_data(config, community_sf)
+generate_images(acs_history, 'acs')
+
 
 block_race_populations_2010 <- get_decennial(
-  geography = "block",
-  variables = "P008001",  # Total population (PL94-171)
-  year      = 2010,
-  state     = "IL",
-  county    = "Cook",
-  geometry  = TRUE         # Include shapefile for mapping
+  geography   = "block",
+  variables   = "P008001",  # Total population (PL94-171)
+  year        = 2010,
+  state       = "IL",
+  county      = "Cook",
+  geometry    = TRUE,         # Include shapefile for mapping
+  cache_table = TRUE
 )
+
+block_race_populations_2020 <- get_decennial(
+  geography   = "block",
+  variables   = "P1_001N",  # Total population (PL94-171)
+  year        = 2020,
+  state       = "IL",
+  county      = "Cook",
+  geometry    = TRUE,         # Include shapefile for mapping
+  cache_table = TRUE
+)
+
 
 # intersections = st_intersects(block_race_populations_2020, community_sf)
 
 # community_block_race_populations_2020 <- block_race_populations_2020[lengths(intersections) > 0, ]
 
 # Find 2020 blocks within community
-block_within_community_2020 <- st_within(block_race_populations_2020, community_sf)
+block_within_community_2020 <- st_intersects(block_race_populations_2020, community_sf)
 
 # Filter only those blocks
 community_block_race_populations_2020 <- block_race_populations_2020[lengths(block_within_community_2020) > 0, ]
 
 # Find 2010 blocks within community
-block_within_community_2010 <- st_within(block_race_populations_2010, community_sf)
+block_within_community_2010 <- st_intersects(block_race_populations_2010, community_sf)
 
 # Filter only those blocks
 community_block_race_populations_2010 <- block_race_populations_2010[lengths(block_within_community_2010) > 0, ]
@@ -275,17 +497,19 @@ vars_acs5_block_group_2023 <- vars_acs5_2023 %>%
     filter(geography == "block group")
 
 
-# B01003_001 Estimate!!Total TOTAL POPULATION                             block gr…
+# B01001_001 Estimate!!Total SEX BY AGE
+# B01003_001 Estimate!!Total TOTAL POPULATION
+# B02001_001 Estimate!!Total RACE
 # B25001_001 Estimate!!Total HOUSING UNITS
 # B25018_001 Estimate!!Median number of rooms
 # B25058_001 Estimate!!Median contract rent
 # B25064_001 Estimate!!Median gross rent
 # B25077_001 Estimate!!Median value (dollars)
 
-# B01001_001 Estimate!!Total SEX BY AGE
+# B01001_002 Estimate!!Total!!Male SEX BY AGE
+# B01001_026 Estimate!!Total!!Female SEX BY AGE
+# B25001_001 Estimate!!Total HOUSING UNITS
 # B01002_001 Estimate!!Median age!!Total MEDIAN AGE BY SEX
-# B01003_001 Estimate!!Total TOTAL POPULATION
-# B02001_001 Estimate!!Total RACE
 # B19127_001 Estimate!!Aggregate family income in the past 12 months
 # B08303_001 Estimate!!Total TRAVEL TIME TO WORK
 common_acs_vars = inner_join(vars_acs5_block_group_2015, vars_acs5_block_group_2023, by=c("name"))
@@ -334,22 +558,7 @@ block_within_community_2023 <- st_within(block_group_populations_2023, community
 community_block_group_populations_2023 <- block_group_populations_2023[lengths(block_within_community_2023) > 0, ]
 
 
-# Grow block groups until reaching at least min_n
-grow_block_groups <- function(curr_block_groups, all_block_groups, min_n = 60) {
-  curr_bg <- curr_block_groups
-  all_bg <- all_block_groups
 
-  while (nrow(curr_bg) < min_n) {
-    # print(nrow(curr_bg))
-    # Replace curr_bg with all blocks that intersect the current selection
-    curr_bg <- all_bg[lengths(st_intersects(all_bg, curr_bg)) > 0, ]
-
-    # Stop if we reached min_n
-    if (nrow(curr_bg) >= min_n) break
-  }
-
-  return(curr_bg)
-}
 
 new_community_block_group_populations_2015 <- grow_block_groups(community_block_group_populations_2015, block_group_populations_2015)
 
