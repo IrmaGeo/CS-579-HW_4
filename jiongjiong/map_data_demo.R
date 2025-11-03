@@ -6,9 +6,12 @@
 # install.packages("ggplot2")
 # install.packages("here")
 # install.packages("tidycensus")
+# install.packages("tidyverse")
 # install.packages("curl", type = "source")
 # install.packages("tigris")
+# install.packages("patchwork")
 
+library(readr)
 library(sf)
 library(dplyr)
 library(tidyr)
@@ -16,40 +19,59 @@ library(readr)
 library(ggplot2)
 library(here)
 library(tidycensus)
+library(tidyverse)
 library(tigris)
+library(patchwork)
 
 getwd()
 
+census_api_key_file_path <- file.path(getwd(), 'census_api_key.txt')
+
+stopifnot(file.exists(census_api_key_file_path))
+
+census_api_key <- trimws(read_file(census_api_key_file_path))
+census_api_key(census_api_key, install = FALSE)
 
 # Data is downloaded from: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Community-Areas-current-/cauq-8yn6
 # Download steps:
 #     1. Click "Export" button
 #     2. Export as shapefile.
 #     3. Unzip the download zip file.
-chi_ca_file <- here::here("Boundaries_CommunityAreas_20251004/geo_export_2f67acac-76d9-47a1-9c12-fcf8534da850.shp")
 
-file.exists(chi_ca_file)
+boundary_file_path <- file.path(getwd(), 'Boundaries - Community Areas_20251102/geo_export_78bb31e8-e65e-47ef-bb49-90dbc4911759.shp')
 
-chi_ca_sf <- sf::st_read(chi_ca_file)
-nrow(chi_ca_sf)
-head(chi_ca_sf)
+stopifnot(file.exists(boundary_file_path))
+
+chi_ca_sf <- sf::st_read(boundary_file_path)
+# Converts all coordinates into North America NAD83 CRS
+chi_ca_proj_sf <- sf::st_transform(chi_ca_sf, crs=4269)
+
+
+# chi_ca_file1 <- file.path(getwd(), 'Boundaries_CommunityAreas_20251004/geo_export_2f67acac-76d9-47a1-9c12-fcf8534da850.shp')
+
+# file.exists(chi_ca_file1)
+
+# chi_ca_sf1 <- sf::st_read(chi_ca_file1)
+# nrow(chi_ca_sf1)
+# head(chi_ca_sf1)
 
 st_crs(chi_ca_sf)
 
 # suggest_crs(chi_ca_sf)
 
-chi_ca_proj_sf <- sf::st_transform(chi_ca_sf, crs=4269)
-nrow(chi_ca_proj_sf)
+# chi_ca_proj_sf <- sf::st_transform(chi_ca_sf, crs=4269)
+# nrow(chi_ca_proj_sf)
 
 
-head(chi_ca_proj_sf)
+# head(chi_ca_proj_sf)
 
 ggplot(chi_ca_proj_sf) +
     geom_sf() +
     labs(title = "Chicago Community Areas NAD83")
 
 # community_names <- c("WEST GARFIELD PARK", "EAST GARFIELD PARK")
-community_names <- c("EAST GARFIELD PARK")
+# community_names <- c('South Lawndale', 'Hermosa', 'EAST GARFIELD PARK')
+community_names <- c('EAST GARFIELD PARK')
 community_names_str <- paste(community_names, collapse = ", ")
 
 community_sf <- dplyr::filter(chi_ca_proj_sf, community %in% community_names)
@@ -61,11 +83,369 @@ ggplot(community_sf) +
     geom_sf() +
     labs(title = paste("Community Areas:", community_names_str))
 
-total_population_10 <- get_decennial(
+
+# 1 H1_001N " !!Total:" OCCUPANCY STATUS
+# P1_001N !!Total: RACE
+vars_pl_2020 = load_variables(2020, "pl")
+# PCT023001 Total RACE
+# H003001 Total OCCUPANCY STATUS
+# P008001 Total RACE
+vars_sf1_2010 = load_variables(2010, "sf1")
+vars_sf2_2010 = load_variables(2010, "sf2")
+
+write.csv(vars_pl_2020, file.path(getwd(),"vars_pl_2020.csv"))
+
+write.csv(vars_sf1_2010, file.path(getwd(),"vars_sf1_2010.csv"))
+
+write.csv(vars_sf2_2010, file.path(getwd(),"vars_sf2_2010.csv"))
+
+common_decennial_vars = inner_join(vars_pl_2020, vars_sf1_2010, by="concept", relationship = "many-to-many")
+
+
+block_race_populations_2020 <- get_decennial(
+  geography = "block",
+  variables = "P1_001N",  # Total population (PL94-171)
+  year      = 2020,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE         # Include shapefile for mapping
+)
+
+block_race_populations_2010 <- get_decennial(
+  geography = "block",
+  variables = "P008001",  # Total population (PL94-171)
+  year      = 2010,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE         # Include shapefile for mapping
+)
+
+# intersections = st_intersects(block_race_populations_2020, community_sf)
+
+# community_block_race_populations_2020 <- block_race_populations_2020[lengths(intersections) > 0, ]
+
+# Find 2020 blocks within community
+block_within_community_2020 <- st_within(block_race_populations_2020, community_sf)
+
+# Filter only those blocks
+community_block_race_populations_2020 <- block_race_populations_2020[lengths(block_within_community_2020) > 0, ]
+
+# Find 2010 blocks within community
+block_within_community_2010 <- st_within(block_race_populations_2010, community_sf)
+
+# Filter only those blocks
+community_block_race_populations_2010 <- block_race_populations_2010[lengths(block_within_community_2010) > 0, ]
+
+# Plot
+p2010 <- ggplot() +
+  geom_sf(data = community_block_race_populations_2010, aes(fill = value), color = NA) +
+  geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+  # scale_fill_viridis_c(name = "Population in 2010", option = "plasma") +
+  # scale_fill_gradient(name = "Population in 2010",
+  #                     low = "green", high = "yellow") +
+    scale_fill_distiller(name = "Population in 2010", palette = "YlGn", direction = -1) +
+
+  ggtitle("Total Population of all Races (2010)") +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+p2020 <- ggplot() +
+  geom_sf(data = community_block_race_populations_2020, aes(fill = value), color = NA) +
+  geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+  # scale_fill_viridis_c(name = "Population in 2020", option = "plasma") +
+  # scale_fill_gradient(name = "Population in 2020",
+  #                     low = "green", high = "yellow") +
+  scale_fill_distiller(name = "Population in 2020", palette = "YlGn", direction = -1) +
+  ggtitle("Total Population of all Races (2020)") +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+
+# Combine plots
+population_plot <- p2010 | p2020
+
+# Save as PNG
+ggsave(file.path(getwd(), "population_2010_2020.png"), population_plot,
+       width = 10, height = 3, dpi = 300)
+
+ggplot() +
+    geom_freqpoly(data = community_block_race_populations_2010,
+                aes(x = value, color = "2010"),
+                binwidth = binwidth, linewidth = 1.2) +
+    geom_freqpoly(data = community_block_race_populations_2020,
+                aes(x = value, color = "2020"),
+                binwidth = binwidth, linewidth = 1.2) +
+    scale_color_manual(name = "Year", values = c("2010" = "green", "2020" = "yellow")) +
+    ggtitle("Population of all Races Comparison: 2010 vs 2020") +
+    xlab("Population of all Races per Block") +
+    ylab("Number of Blocks") +
+    theme_minimal()
+
+
+
+#
+block_houses_2010 <- get_decennial(
+  geography = "block",
+  variables = "H003001",  # Total housing units (PL94-171)
+  year      = 2010,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE         # Include shapefile for mapping
+)
+
+block_houses_2020 <- get_decennial(
+  geography = "block",
+  variables = "H1_001N",  # Total housing units (PL94-171)
+  year      = 2020,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE         # Include shapefile for mapping
+)
+
+# Find 2010 blocks within community
+block_within_community_2010 <- st_within(block_houses_2010, community_sf)
+
+# Filter only those blocks
+community_block_houses_2010 <- block_houses_2010[lengths(block_within_community_2010) > 0, ]
+
+# Find 2020 blocks within community
+houses_block_within_community_2020 <- st_within(block_houses_2020, community_sf)
+
+# Filter only those blocks
+community_block_houses_2020 <- block_houses_2020[lengths(houses_block_within_community_2020) > 0, ]
+
+# Plot
+plot_houses_2010 <- ggplot() +
+  geom_sf(data = community_block_houses_2010, aes(fill = value), color = NA) +
+  geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+  scale_fill_distiller(name = "Housing Units in 2010", palette = "YlGn", direction = -1) +
+  ggtitle("Total Number of Housing Units (2010)") +
+  theme_minimal()
+
+plot_houses_2020 <- ggplot() +
+  geom_sf(data = community_block_houses_2020, aes(fill = value), color = NA) +
+  geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+  scale_fill_distiller(name = "Housing Units in 2020", palette = "YlGn", direction = -1) +
+  ggtitle("Total Number of Housing Units (2020)") +
+  theme_minimal()
+
+# Combine plots
+house_plot <- plot_houses_2010 | plot_houses_2020
+
+# Save as PNG
+ggsave(file.path(getwd(), "houses_2010_2020.png"), house_plot,
+       width = 12, height = 6, dpi = 300)
+
+ggplot() +
+    geom_freqpoly(data = community_block_houses_2010,
+                aes(x = value, color = "2010"),
+                binwidth = binwidth, linewidth = 1.2) +
+    geom_freqpoly(data = community_block_houses_2020,
+                aes(x = value, color = "2020"),
+                binwidth = binwidth, linewidth = 1.2) +
+    scale_color_manual(name = "Year", values = c("2010" = "green", "2020" = "yellow")) +
+    ggtitle("Housing Units Counts Comparison: 2010 vs 2020") +
+    xlab("Housing Units per Block") +
+    ylab("Number of Blocks") +
+    theme_minimal()
+
+
+
+vars_acs5_2010 <- load_variables(2010, "acs5")
+vars_acs5_block_group_2010 <- vars_acs5_2010 %>%
+  filter(geography == "block group")
+
+vars_acs5_2015 <- load_variables(2015, "acs5")
+vars_acs5_block_group_2015 <- vars_acs5_2015 %>%
+  filter(geography == "block group")
+
+vars_acs5_2020 <- load_variables(2020, "acs5")
+vars_acs5_block_group_2020 <- vars_acs5_2020 %>%
+  filter(geography == "block group")
+
+
+vars_acs5_2023 <- load_variables(2023, "acs5")
+vars_acs5_block_group_2023 <- vars_acs5_2023 %>%
+    filter(geography == "block group")
+
+
+# B01003_001 Estimate!!Total TOTAL POPULATION                             block gr…
+# B25001_001 Estimate!!Total HOUSING UNITS
+# B25018_001 Estimate!!Median number of rooms
+# B25058_001 Estimate!!Median contract rent
+# B25064_001 Estimate!!Median gross rent
+# B25077_001 Estimate!!Median value (dollars)
+
+# B01001_001 Estimate!!Total SEX BY AGE
+# B01002_001 Estimate!!Median age!!Total MEDIAN AGE BY SEX
+# B01003_001 Estimate!!Total TOTAL POPULATION
+# B02001_001 Estimate!!Total RACE
+# B19127_001 Estimate!!Aggregate family income in the past 12 months
+# B08303_001 Estimate!!Total TRAVEL TIME TO WORK
+common_acs_vars = inner_join(vars_acs5_block_group_2015, vars_acs5_block_group_2023, by=c("name"))
+
+
+# tract_populations_2010 <- get_acs(
+#   geography = "tract",
+#   variables = "B01003_001",
+#   year      = 2010,
+#   state     = "IL",
+#   county    = "Cook",
+#   geometry  = TRUE,         # Include shapefile for mapping
+#   survey = "acs5"
+# )
+
+block_group_populations_2015 <- get_acs(
+  geography = "block group",
+  variables = "B01003_001",
+  year      = 2015,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE,         # Include shapefile for mapping
+  survey = "acs5"
+)
+
+block_group_populations_2023 <- get_acs(
+  geography = "block group",
+  variables = "B01003_001",
+  year      = 2023,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE,         # Include shapefile for mapping
+  survey = "acs5"
+)
+
+# Find 2015 block groups within community
+block_within_community_2015 <- st_within(block_group_populations_2015, community_sf)
+
+# Filter only those block groups
+community_block_group_populations_2015 <- block_group_populations_2015[lengths(block_within_community_2015) > 0, ]
+
+# Find 2023 block groups within community
+block_within_community_2023 <- st_within(block_group_populations_2023, community_sf)
+
+# Filter only those block groups
+community_block_group_populations_2023 <- block_group_populations_2023[lengths(block_within_community_2023) > 0, ]
+
+
+# Grow block groups until reaching at least min_n
+grow_block_groups <- function(curr_block_groups, all_block_groups, min_n = 60) {
+  curr_bg <- curr_block_groups
+  all_bg <- all_block_groups
+
+  while (nrow(curr_bg) < min_n) {
+    # print(nrow(curr_bg))
+    # Replace curr_bg with all blocks that intersect the current selection
+    curr_bg <- all_bg[lengths(st_intersects(all_bg, curr_bg)) > 0, ]
+
+    # Stop if we reached min_n
+    if (nrow(curr_bg) >= min_n) break
+  }
+
+  return(curr_bg)
+}
+
+new_community_block_group_populations_2015 <- grow_block_groups(community_block_group_populations_2015, block_group_populations_2015)
+
+new_community_block_group_populations_2023 <- grow_block_groups(community_block_group_populations_2023, block_group_populations_2023)
+
+
+# Plot
+plot_populations_2015 <- ggplot() +
+  geom_sf(data = new_community_block_group_populations_2015, aes(fill = estimate), color = NA) +
+  geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+  scale_fill_distiller(name = "Total Population in 2015", palette = "YlGn", direction = -1) +
+  ggtitle("Total Population (2010)") +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+plot_populations_2023 <- ggplot() +
+  geom_sf(data = new_community_block_group_populations_2023, aes(fill = estimate), color = NA) +
+  geom_sf(data = community_sf, fill = NA, color = "black", size = 0.6) +
+  scale_fill_distiller(name = "Total Population in 2023", palette = "YlGn", direction = -1) +
+  ggtitle("Total Population (2023)") +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+# Combine plots
+populations_plot <- plot_populations_2015 | plot_populations_2023
+
+# Save as PNG
+ggsave(file.path(getwd(), "populations_2015_2023.png"), populations_plot,
+       width = 12, height = 6, dpi = 300)
+
+# ggplot() +
+#     geom_freqpoly(data = new_community_block_group_populations_2015,
+#                 aes(x = estimate, color = "2015"),
+#                 binwidth = binwidth, linewidth = 1.2) +
+#     geom_freqpoly(data = new_community_block_group_populations_2023,
+#                 aes(x = estimate, color = "2023"),
+#                 binwidth = binwidth, linewidth = 1.2) +
+#     scale_color_manual(name = "Year", values = c("2015" = "green", "2023" = "yellow")) +
+#     ggtitle("Total Population Comparison: 2015 vs 2023") +
+#     xlab("Total Population per Block Group") +
+#     ylab("Number of Block Groups") +
+#     theme_minimal()
+
+library(ggplot2)
+
+# Set binwidth
+binwidth <- 50  # adjust as needed
+
+# Combine datasets with a "Year" column
+combined <- rbind(
+  data.frame(estimate = new_community_block_group_populations_2015$estimate, Year = "2015"),
+  data.frame(estimate = new_community_block_group_populations_2023$estimate, Year = "2023")
+)
+
+# Overlapping histogram with named colors
+ggplot(combined, aes(x = estimate, fill = Year)) +
+  geom_histogram(binwidth = binwidth, color = "black", alpha = 0.6, position = "identity") +
+  scale_fill_manual(values = c("2015" = "blue", "2023" = "green")) +
+  ggtitle("Total Population Comparison: 2015 vs 2023") +
+  xlab("Total Population per Block Group") +
+  ylab("Number of Block Groups") +
+  theme_minimal()
+
+ks.test(x = new_community_block_group_populations_2015$estimate,
+        y = new_community_block_group_populations_2023$estimate)
+
+
+ks.test(x = new_community_block_group_populations_2015$moe,
+        y = new_community_block_group_populations_2023$moe)
+
+# Small D and large p-value
+
+#
+block_race_populations_2020 <- get_decennial(
+  geography = "block",
+  variables = "P1_001N",  # Total population (PL94-171)
+  year      = 2020,
+  state     = "IL",
+  county    = "Cook",
+  geometry  = TRUE         # Include shapefile for mapping
+)
+
+
+
+total_population_2010 <- get_decennial(
     geography = "state",
     variables = "P001001",
     year = 2010
 )
+
 
 st <- states()
 nrow(st)
