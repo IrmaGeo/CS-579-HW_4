@@ -251,14 +251,26 @@ generate_images <- function(history, data_type) {
         years <- c()             # Initialize empty vector
         plot_images <- list()    # Store plots
 
-        for (data_info in data_info_list) {
+        # Determine overall min and max fill_value for this category
+        fill_min <- Inf
+        fill_max <- -Inf
+
+        for (data_info_idx in seq_along(data_info_list)) {
+            data_info <- data_info_list[[data_info_idx]]
+
             year <- data_info$year
             data <- data_info$data
             # print(paste("Variable:", data_info$variable_name,
             #             "Year:", year))
             title <- paste(description, 'in', year)
 
+            # Only last plot shows legend
+            show_legend <- ifelse(data_info_idx == length(data_info_list), TRUE, FALSE)
+
             data$fill_value <- if (data_type == "decennial") data$value else data$estimate
+
+            fill_min <- min(fill_min, min(data$fill_value, na.rm = TRUE))
+            fill_max <- max(fill_max, max(data$fill_value, na.rm = TRUE))
 
             plot_image <- ggplot() +
                 geom_sf(data = data, aes(fill = fill_value), color = NA) +
@@ -266,7 +278,11 @@ generate_images <- function(history, data_type) {
                 # scale_fill_viridis_c(name = category_name, option = "plasma") +
                 # scale_fill_gradient(name = category_name,
                 #                     low = "green", high = "yellow") +
-                scale_fill_distiller(name=category_name, palette = "YlGn", direction = -1) +
+                scale_fill_distiller(name=category_name,
+                                     palette = "YlGn",
+                                     direction = -1,
+                                     limits = c(fill_min, fill_max),
+                                     guide = if (show_legend) "colourbar" else "none") +
                 ggtitle(title) +
                 theme_minimal() +
                 theme(
@@ -282,7 +298,9 @@ generate_images <- function(history, data_type) {
         }
 
         # Horizontal combine
-        combined_plot <- wrap_plots(plot_images, ncol = length(plot_images)) +
+        combined_plot <- wrap_plots(plot_images,
+                                    ncol = length(plot_images),
+                                    guides = "collect") +
             plot_annotation(
                 title = paste(str_to_title(community_names_str),
                     category_name,
@@ -314,11 +332,28 @@ generate_images <- function(history, data_type) {
     }
 }
 
+
 decennial_history <- get_decennial_data(config, community_sf)
 generate_images(decennial_history, 'decennial')
 
 acs_history <- get_acs_data(config, community_sf)
 generate_images(acs_history, 'acs')
+
+
+for (category_results_info in acs_history) {
+    category_name <- category_results_info$category_name
+    description <- category_results_info$description
+    data_info_list <- category_results_info$category_results
+
+    for (data_info in data_info_list) {
+        year <- data_info$year
+        data <- data_info$data
+
+        year
+
+
+
+acs_history[[1]][["category_results"]][[2]][["data"]]
 
 
 block_race_populations_2010 <- get_decennial(
@@ -483,7 +518,7 @@ vars_acs5_2010 <- load_variables(2010, "acs5")
 vars_acs5_block_group_2010 <- vars_acs5_2010 %>%
   filter(geography == "block group")
 
-vars_acs5_2015 <- load_variables(2015, "acs5")
+vars_acs5_2015 <- load_variables(2015, "acs5", cache=TRUE)
 vars_acs5_block_group_2015 <- vars_acs5_2015 %>%
   filter(geography == "block group")
 
@@ -492,10 +527,12 @@ vars_acs5_block_group_2020 <- vars_acs5_2020 %>%
   filter(geography == "block group")
 
 
-vars_acs5_2023 <- load_variables(2023, "acs5")
+vars_acs5_2023 <- load_variables(2023, "acs5", cache=TRUE)
 vars_acs5_block_group_2023 <- vars_acs5_2023 %>%
     filter(geography == "block group")
 
+
+vars_acs1_2023 <- load_variables(2023, "acs1", cache=TRUE)
 
 # B01001_001 Estimate!!Total SEX BY AGE
 # B01003_001 Estimate!!Total TOTAL POPULATION
