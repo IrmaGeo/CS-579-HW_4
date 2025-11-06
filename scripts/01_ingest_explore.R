@@ -121,7 +121,7 @@ readr::write_csv(bg_counts, file.path(OUT_DIR, paste0("bg_counts_CA_", MY_CA_NUM
 
 cat("Saved scaffold to", OUT_DIR, "\n")
 
-# 7) quick visualization
+# 7) visualization
 base_map <- chi_ca_sf |> dplyr::filter(area_numbe %in% TARGET_CA_NUMBERS)
 focus_outline <- base_map |> dplyr::filter(area_numbe == MY_CA_NUM)
 

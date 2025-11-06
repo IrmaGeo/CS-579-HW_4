@@ -1,6 +1,5 @@
 # 02_pull_acs_eda_select.R
 
-
 options(tigris_use_cache = TRUE, scipen = 999)
 
 suppressPackageStartupMessages({
@@ -107,7 +106,7 @@ miss_tbl <- eda_df %>%
   pivot_longer(everything(), names_to = "variable", values_to = "na_rate") %>%
   arrange(na_rate)
 
-# Variation (SD snapshot)
+# Variation
 var_tbl <- eda_df %>%
   summarise(
     MedHHIE_sd    = sd(MedHHIE, na.rm = TRUE),
