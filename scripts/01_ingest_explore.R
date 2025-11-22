@@ -22,17 +22,13 @@ suppressPackageStartupMessages({
 
 sf_use_s2(TRUE)
 
-# -------------------------------------------------------------------
 # 1) Parameters & Paths
-# -------------------------------------------------------------------
 
 MY_CA_NUM  <- "30"
 MY_CA_NAME <- "SOUTH LAWNDALE"
 
-# TODO: if you later copy the shapefile into data/raw/, update this path.
 CA_SHAPE_PATH <- "/Users/irmamodzgvrishvili/Desktop/Education/Illinois/Fall25/CS579/Assignement_4/Boundaries - Community Areas_20251024/geo_export_8d7b0465-2b0f-4e61-ad5c-aac8fbd3e33d.shp"
 
-# New folder structure: put scaffold under data/raw/geo_scaffold_CA30
 DATA_DIR          <- "data"
 DATA_RAW_DIR      <- file.path(DATA_DIR, "raw")
 GEO_SCAFFOLD_DIR  <- file.path(DATA_DIR, "geo_scaffold_CA30")
@@ -44,9 +40,7 @@ for (d in c(DATA_DIR, DATA_RAW_DIR, GEO_SCAFFOLD_DIR)) {
 
 OUT_DIR <- GEO_SCAFFOLD_DIR
 
-# -------------------------------------------------------------------
 # 2) Load Community Areas
-# -------------------------------------------------------------------
 
 chi_ca_sf <- st_read(CA_SHAPE_PATH, quiet = TRUE) |>
   st_transform(4326) |>
@@ -56,9 +50,7 @@ chi_ca_sf <- st_read(CA_SHAPE_PATH, quiet = TRUE) |>
 stopifnot(all(c("area_numbe", "community") %in% names(chi_ca_sf)))
 cat("Loaded Community Areas:", nrow(chi_ca_sf), "polygons\n")
 
-# -------------------------------------------------------------------
 # 3) Block groups + blocks geometry
-# -------------------------------------------------------------------
 
 bg_2020 <- tigris::block_groups(
   state = "IL", county = "Cook",
@@ -76,9 +68,7 @@ blocks_2010 <- tigris::blocks(
   select(GEOID10, geometry)
 cat("Blocks 2010 (Cook):", nrow(blocks_2010), "features\n")
 
-# -------------------------------------------------------------------
 # 4) Neighbor CAs & CA assignment helpers
-# -------------------------------------------------------------------
 
 get_neighbors <- function(seed_ids, ca_sf) {
   touched <- st_touches(
@@ -89,10 +79,10 @@ get_neighbors <- function(seed_ids, ca_sf) {
   ca_sf$area_numbe[rowSums(touched) > 0]
 }
 
-# Assign each geometry to a CA (centroid in projected CRS)
+# Assign each geometry to a CA
 assign_to_ca <- function(sf_layer, ca_sf) {
   id_col    <- names(sf_layer)[1]
-  local_crs <- 26916  # UTM zone 16N (Chicago)
+  local_crs <- 26916
 
   pts     <- st_transform(sf_layer, local_crs) |> st_point_on_surface()
   ca_proj <- st_transform(ca_sf, local_crs)
@@ -103,9 +93,7 @@ assign_to_ca <- function(sf_layer, ca_sf) {
     dplyr::distinct(.data[[id_col]], .keep_all = TRUE)
 }
 
-# -------------------------------------------------------------------
 # 5) Build ≥60 BG scaffold for CA 30 + neighbors
-# -------------------------------------------------------------------
 
 TARGET_CA_NUMBERS <- MY_CA_NUM
 iter <- 0
@@ -150,9 +138,7 @@ bg_counts <- bg_target_sf |>
 
 print(bg_counts, n = 100)
 
-# -------------------------------------------------------------------
-# 6) Save scaffold (files overwrite if they exist)
-# -------------------------------------------------------------------
+# 6) Save scaffold
 
 write_lines(
   TARGET_CA_NUMBERS,
@@ -178,9 +164,7 @@ readr::write_csv(
 
 cat("Saved scaffold to", OUT_DIR, "\n")
 
-# -------------------------------------------------------------------
 # 7) Visualization
-# -------------------------------------------------------------------
 
 base_map      <- chi_ca_sf |> dplyr::filter(area_numbe %in% TARGET_CA_NUMBERS)
 focus_outline <- base_map |> dplyr::filter(area_numbe == MY_CA_NUM)

@@ -1,6 +1,4 @@
-# CS579 Final Project — 02_clean_select_variables.R
-# City-wide ACS pull + feature selection & scaling
-# UPDATED: Now includes Poverty & Unemployment variables so separate pull isn't needed later.
+# 02_clean_select_variables.R
 
 options(tigris_use_cache = TRUE, scipen = 999)
 
@@ -19,9 +17,7 @@ suppressPackageStartupMessages({
 
 sf_use_s2(TRUE)
 
-# -------------------------------------------------------------------
 # 0) Parameters & Directory Structure
-# -------------------------------------------------------------------
 
 ACS_YEAR <- 2022  # 2018–2022 ACS (5-year)
 
@@ -34,12 +30,9 @@ dir.create(DATA_DIR,  showWarnings = FALSE)
 dir.create(TEMP_DIR,  showWarnings = FALSE)
 dir.create(CLEAN_DIR, showWarnings = FALSE)
 
-# 🔥 UPDATE THIS once you store shapefile inside your project:
 CA_SHAPE_PATH <- "/Users/irmamodzgvrishvili/Desktop/Education/Illinois/Fall25/CS579/Assignement_4/Boundaries - Community Areas_20251024"
 
-# -------------------------------------------------------------------
 # 1) Load Chicago Community Areas
-# -------------------------------------------------------------------
 
 chi_ca_sf <- st_read(CA_SHAPE_PATH, quiet = TRUE) |>
   st_transform(4326) |>
@@ -67,9 +60,7 @@ assign_to_ca <- function(sf_layer, ca_sf) {
   )
 }
 
-# -------------------------------------------------------------------
 # 2) Pull ACS Citywide Block-Group Data
-# -------------------------------------------------------------------
 
 acs_vars <- c(
   TotalPop   = "B01003_001",
@@ -83,11 +74,10 @@ acs_vars <- c(
   Black      = "B03002_004",
   Hisp       = "B03002_012",
   White      = "B03002_003",
-  # --- ADDED VARIABLES (Poverty & Unemployment) ---
-  PovUniverse = "B17021_001",   # Universe: Population for whom poverty status is determined
-  PovBelow    = "B17021_002",   # Income in the past 12 months below poverty level
-  LaborForce  = "B23025_003",   # In civilian labor force
-  Unemployed  = "B23025_005"    # Unemployed
+  PovUniverse = "B17021_001",
+  PovBelow    = "B17021_002",
+  LaborForce  = "B23025_003",
+  Unemployed  = "B23025_005"
 )
 
 message("Requesting ACS ", ACS_YEAR, " block-group data...")
@@ -103,9 +93,7 @@ acs_bg_all <- get_acs(
 
 message("Pulled ", nrow(acs_bg_all), " BGs (Cook County).")
 
-# -------------------------------------------------------------------
 # 3) Keep only BGs whose centroid lies inside Chicago
-# -------------------------------------------------------------------
 
 labs <- assign_to_ca(acs_bg_all, chi_ca_sf)
 
@@ -115,9 +103,7 @@ acs_bg <- acs_bg_all |>
 
 message("Kept ", nrow(acs_bg), " BGs inside Chicago.")
 
-# -------------------------------------------------------------------
-# 4) Derived Indicators (your core variables)
-# -------------------------------------------------------------------
+# 4) Derived Indicators
 
 acs_ind <- acs_bg |>
   mutate(
@@ -127,15 +113,11 @@ acs_ind <- acs_bg |>
     PctBlack   = if_else(TotalPopE   > 0, BlackE     / TotalPopE, NA_real_),
     PctHisp    = if_else(TotalPopE   > 0, HispE      / TotalPopE, NA_real_),
     PctWhite   = if_else(TotalPopE   > 0, WhiteE     / TotalPopE, NA_real_),
-    # --- ADDED INDICATORS ---
     PctPoverty       = if_else(PovUniverseE > 0, PovBelowE   / PovUniverseE, NA_real_),
     UnemploymentRate = if_else(LaborForceE  > 0, UnemployedE / LaborForceE,  NA_real_)
   )
 
-# -------------------------------------------------------------------
 # 5) EDA of Candidate Variables
-# -------------------------------------------------------------------
-
 cand_vars <- c(
   "MedHHIE","MedRentE",
   "PctRenter","PctCollege",
@@ -163,9 +145,7 @@ write_csv(var_tbl, file.path(TEMP_DIR, "variation_citywide.csv"))
 cor_mat <- eda_df |> select(all_of(cand_vars)) |> cor(use="pairwise.complete.obs")
 write_csv(as.data.frame(cor_mat), file.path(TEMP_DIR, "correlation_citywide.csv"))
 
-# -------------------------------------------------------------------
 # 6) Auto-select 6 Variables (your HW4 logic)
-# -------------------------------------------------------------------
 
 pick_order <- c("MedHHIE","MedRentE","PctCollege","PctRenter","PctBlack","PctHisp","PctWhite")
 
@@ -182,20 +162,15 @@ for (v in pick_order) {
 message("Auto-selected variables: ", paste(chosen, collapse=", "))
 write_lines(chosen, file.path(CLEAN_DIR, "selected_vars_citywide.txt"))
 
-# -------------------------------------------------------------------
 # 7) Drop incomplete BGs + scale
-# -------------------------------------------------------------------
 
-# We keep 'chosen' vars for modeling, PLUS the new map variables for visualization
-# even if they aren't used in the k-NN model.
 extra_map_vars <- c("PctPoverty", "UnemploymentRate")
-# Only keep columns that actually exist (in case calculation failed)
 extra_map_vars <- intersect(extra_map_vars, names(acs_ind))
 
 model_ready <- acs_ind |>
   select(GEOID, CA_Number, CA_Name, geometry, all_of(chosen), all_of(extra_map_vars))
 
-# Drop BGs with NA in the *chosen modeling variables* only
+# Drop BGs with NA in the chosen modeling variables* only
 dropped <- model_ready |> st_drop_geometry() |> filter(if_any(all_of(chosen), is.na))
 if (nrow(dropped) > 0) {
   write_csv(dropped, file.path(CLEAN_DIR, "dropped_BG_missing.csv"))
@@ -215,9 +190,7 @@ colnames(scaled) <- paste0(colnames(scaled), "_Z")
 
 final_sf <- bind_cols(model_ready, scaled) |> st_as_sf()
 
-# -------------------------------------------------------------------
 # 8) Save Outputs
-# -------------------------------------------------------------------
 
 save_rds_path <- file.path(CLEAN_DIR, "CA_ALL_clean.rds")
 write_rds(final_sf, save_rds_path)
@@ -227,11 +200,9 @@ write_csv(
   file.path(CLEAN_DIR, "CA_ALL_clean_no_geom.csv")
 )
 
-message("✅ Saved clean dataset: ", save_rds_path)
+message("Saved clean dataset: ", save_rds_path)
 
-# -------------------------------------------------------------------
 # 9) Quick EDA Plots
-# -------------------------------------------------------------------
 
 long_df <- final_sf |> st_drop_geometry() |> select(all_of(chosen)) |>
   pivot_longer(everything())

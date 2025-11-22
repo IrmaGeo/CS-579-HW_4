@@ -1,8 +1,5 @@
-# CS579 Final Project — 05_network_model.R
-# Multi-layer network for Chicago:
-#   Layer A1: CA adjacency (shared borders)
-#   Layer A2: BG adjacency (shared borders)
-#   Layer B : BG similarity (k-NN on standardized ACS features)
+# 05_network_model.R
+
 
 options(tigris_use_cache = TRUE, scipen = 999)
 
@@ -18,12 +15,12 @@ suppressPackageStartupMessages({
   library(scales)
   library(tibble)
   library(ggrepel)
-  library(viridis)   # nice unlimited palettes
+  library(viridis)
 })
 
 sf_use_s2(TRUE)
 
-# 0) Parameters -------------------------------------------------------------
+# 0) Parameters
 
 MY_CA_NUM <- "30"
 
@@ -32,7 +29,6 @@ CLEAN_FILE <- file.path("data", "clean_data", "CA_ALL_clean.rds")
 METRICS_DIR <- file.path("data", "network_outputs")
 FIG_DIR     <- file.path("results", "figures", "network_layers")
 
-# keep your local path for now; can later move shapefile into data/raw/
 CA_SHAPE_PATH <- "/Users/irmamodzgvrishvili/Desktop/Education/Illinois/Fall25/CS579/Assignement_4/Boundaries - Community Areas_20251024"
 
 K_NEIGHBORS <- 5
@@ -41,7 +37,7 @@ set.seed(579)
 dir.create(METRICS_DIR, showWarnings = FALSE, recursive = TRUE)
 dir.create(FIG_DIR,     showWarnings = FALSE, recursive = TRUE)
 
-# 1) Load CA boundaries + cleaned BG data ----------------------------------
+# 1) Load CA boundaries + cleaned BG data
 
 chi_ca_sf <- st_read(CA_SHAPE_PATH, quiet = TRUE) |>
   st_transform(4326) |>
@@ -85,7 +81,7 @@ bg_sf <- bg_sf |>
 message("Final BG count (city-wide): ", nrow(bg_sf))
 included_cas <- sort(unique(bg_sf$CA_Number))
 
-# 2) Layer B: BG similarity (kNN) ------------------------------------------
+# 2) Layer B: BG similarity (kNN)
 
 message("\n--- Building Layer B: BG similarity (kNN, k = ", K_NEIGHBORS, ") ---")
 
@@ -154,7 +150,7 @@ write_csv(
   file.path(METRICS_DIR, "layerB_top_bridges_citywide.csv")
 )
 
-# 3) Layer A1: CA adjacency -------------------------------------------------
+# 3) Layer A1: CA adjacency
 
 message("\n--- Building Layer A1: CA adjacency network ---")
 
@@ -211,7 +207,7 @@ ca_attr_A_CA <- tibble(
 ca_results_CA <- ca_sub |>
   left_join(ca_attr_A_CA, by = "area_numbe")
 
-# 4) Layer A2: BG adjacency -------------------------------------------------
+# 4) Layer A2: BG adjacency
 
 message("\n--- Building Layer A2: BG adjacency (shared borders) ---")
 
@@ -262,7 +258,7 @@ bg_attr_A_BG <- tibble(
 bg_results <- bg_results |>
   left_join(bg_attr_A_BG, by = "GEOID")
 
-# 5) Metrics for BG-based layers -------------------------------------------
+# 5) Metrics for BG-based layers
 
 compute_bg_layer_metrics <- function(g, layer_label, MY_CA_NUM) {
   vattrs <- data.frame(
@@ -328,7 +324,7 @@ write_csv(
   file.path(METRICS_DIR, "layerA2_BGadj_network_metrics_citywide.csv")
 )
 
-# CA adjacency metrics (no within-CA at CA level)
+# CA adjacency metrics
 metrics_A1 <- tibble(
   layer                    = "CA_adjacency",
   nodes                    = igraph::vcount(g_A_CA),
@@ -345,12 +341,12 @@ write_csv(
   file.path(METRICS_DIR, "layerA1_CAadj_network_metrics_citywide.csv")
 )
 
-# 6) Plots: Layer B (clusters + network) -----------------------------------
+# 6) Plots: Layer B (clusters + network)
 
 base_map <- chi_ca_sf |>
   filter(area_numbe %in% included_cas)
 
-# ---- Layer B: Louvain clusters ----
+# Layer B: Louvain clusters
 p_louvain_B <- ggplot() +
   geom_sf(data = base_map,
           fill = "grey95", color = "grey70", linewidth = 0.4) +
@@ -381,7 +377,7 @@ ggsave(
   p_louvain_B, width = 9, height = 6.5, dpi = 200
 )
 
-# ---- Layer B: network & gatekeepers ----
+# Layer B: network & gatekeepers
 tmp_cent  <- st_centroid(bg_results)
 coords    <- st_coordinates(tmp_cent)
 bg_centroids <- tmp_cent |>
@@ -442,7 +438,7 @@ ggsave(
   p_net_B, width = 9, height = 6.5, dpi = 200
 )
 
-# 7) Plots: Layer A1 (CA adjacency) ----------------------------------------
+# 7) Plots: Layer A1 (CA adjacency)
 
 p_louvain_A_CA <- ggplot() +
   geom_sf(data = chi_ca_sf,
@@ -474,7 +470,7 @@ ggsave(
   p_louvain_A_CA, width = 8.5, height = 6.5, dpi = 200
 )
 
-# 8) Plots: Layer A2 (BG adjacency) ----------------------------------------
+# 8) Plots: Layer A2 (BG adjacency)
 
 p_louvain_A_BG <- ggplot() +
   geom_sf(data = base_map,
@@ -506,7 +502,7 @@ ggsave(
   p_louvain_A_BG, width = 9, height = 6.5, dpi = 200
 )
 
-# 9) k-sensitivity for Layer B ---------------------------------------------
+# 9) k-sensitivity for Layer B
 
 sweep_k <- function(k, X, geoids, vertex_df) {
   D <- as.matrix(dist(X)); diag(D) <- Inf
@@ -558,7 +554,7 @@ write_csv(
 )
 
 message(
-  "\n✅ Multi-layer network modeling complete.\n",
+  "\n Multi-layer network modeling complete.\n",
   "   Metrics in: ", METRICS_DIR, "\n",
   "   Figures in: ", FIG_DIR
 )

@@ -1,9 +1,4 @@
-# CS579 Final Project — 03_decennial_change_2010_2020.R
-# Compare 2010 vs 2020 decennial for CA30 + neighbors (BG & CA levels)
-# Outputs:
-#   - data/decennial_compare/decennial_CA_change_2010_2020_CA_30.csv
-#   - data/decennial_compare/BG_2010_2020_change_CA_30.csv
-#   - results/figures/decennial_maps/*.png  (BG maps for %Hispanic, %Black)
+# 03_decennial_change_2010_2020.R
 
 options(tigris_use_cache = TRUE, scipen = 999)
 
@@ -21,9 +16,7 @@ suppressPackageStartupMessages({
 
 sf_use_s2(TRUE)
 
-# ---------------------------------------------------------------------
 # 0) Parameters & paths
-# ---------------------------------------------------------------------
 
 MY_CA_NUM <- "30"
 
@@ -35,7 +28,7 @@ OUT_MAPS_DIR  <- file.path("results", "figures", "decennial_maps")
 dir.create(OUT_DATA_DIR, showWarnings = FALSE, recursive = TRUE)
 dir.create(OUT_MAPS_DIR, showWarnings = FALSE, recursive = TRUE)
 
-# 🔥 update once you copy shapefile into project if you want:
+# update once you copy shapefile into project if you want:
 CA_SHAPE_PATH <- "/Users/irmamodzgvrishvili/Desktop/Education/Illinois/Fall25/CS579/Assignement_4/Boundaries - Community Areas_20251024/geo_export_8d7b0465-2b0f-4e61-ad5c-aac8fbd3e33d.shp"
 
 # scaffold from script 01
@@ -72,9 +65,7 @@ assign_to_ca <- function(sf_layer, ca_sf) {
     )
 }
 
-# ---------------------------------------------------------------------
 # 1) Variable codes
-# ---------------------------------------------------------------------
 
 v20_total <- "P1_001N"
 v20_hisp  <- "P2_002N"
@@ -87,9 +78,7 @@ v10_black <- "P003003"
 message("2020/PL  total=", v20_total, "  hisp=", v20_hisp, "  black=", v20_black)
 message("2010/SF1 total=", v10_total, "  hisp=", v10_hisp, "  black=", v10_black)
 
-# ---------------------------------------------------------------------
 # 2) TIGER geometries
-# ---------------------------------------------------------------------
 
 geo20 <- tigris::block_groups(
   state = "IL", county = "Cook",
@@ -107,9 +96,7 @@ if ("GEOID10" %in% names(geo10) && !"GEOID" %in% names(geo10)) {
   geo10 <- dplyr::rename(geo10, GEOID = GEOID10)
 }
 
-# ---------------------------------------------------------------------
 # 3) Decennial attributes (wide)
-# ---------------------------------------------------------------------
 
 # --- 2020 ---
 dec20_wide <- tidycensus::get_decennial(
@@ -145,7 +132,7 @@ if (!"PctBlack20" %in% names(dec20_wide)) {
 
 dec20_sf <- geo20 |>
   left_join(dec20_wide, by = "GEOID") |>
-  filter(GEOID %in% bg_geoids)   # restrict to scaffold BGs
+  filter(GEOID %in% bg_geoids)
 
 # --- 2010 ---
 dec10_wide <- tidycensus::get_decennial(
@@ -183,9 +170,7 @@ dec10_sf <- geo10 |>
   left_join(dec10_wide, by = "GEOID") |>
   st_filter(study_area, .predicate = st_intersects)
 
-# ---------------------------------------------------------------------
 # 4) Attach CA labels
-# ---------------------------------------------------------------------
 
 labs20 <- assign_to_ca(dec20_sf, chi_ca_sf) |> select(GEOID, CA_Number, CA_Name)
 labs10 <- assign_to_ca(dec10_sf, chi_ca_sf) |> select(GEOID, CA_Number, CA_Name)
@@ -193,9 +178,7 @@ labs10 <- assign_to_ca(dec10_sf, chi_ca_sf) |> select(GEOID, CA_Number, CA_Name)
 dec20_sf <- dec20_sf |> left_join(labs20, by = "GEOID")
 dec10_sf <- dec10_sf |> left_join(labs10, by = "GEOID")
 
-# ---------------------------------------------------------------------
 # 5) Sanity checks + tidy exports
-# ---------------------------------------------------------------------
 
 need20 <- c("GEOID","CA_Number","Total20","Hisp20","Black20","PctHisp20","PctBlack20")
 need10 <- c("GEOID","CA_Number","Total10","Hisp10","Black10","PctHisp10","PctBlack10")
@@ -216,9 +199,7 @@ write_csv(
   file.path(OUT_DATA_DIR, paste0("BG_2010_tidy_CA_", MY_CA_NUM, ".csv"))
 )
 
-# ---------------------------------------------------------------------
 # 6) CA-level rollups & changes
-# ---------------------------------------------------------------------
 
 ca20 <- dec20_sf |>
   st_drop_geometry() |>
@@ -262,9 +243,7 @@ write_csv(
 )
 message("✅ Saved CA-level change table to ", OUT_DATA_DIR)
 
-# ---------------------------------------------------------------------
 # 6b) BG-level population change
-# ---------------------------------------------------------------------
 
 bg_change <- dec10_sf |>
   st_drop_geometry() |>
@@ -285,9 +264,7 @@ write_csv(
   file.path(OUT_DATA_DIR, paste0("BG_2010_2020_change_CA_", MY_CA_NUM, ".csv"))
 )
 
-# ---------------------------------------------------------------------
 # 7) BG-level maps (saved to results/figures/decennial_maps)
-# ---------------------------------------------------------------------
 
 make_pct_map <- function(data_sf, var, title, filename) {
   g <- ggplot(data_sf) +

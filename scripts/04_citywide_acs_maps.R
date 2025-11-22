@@ -1,7 +1,4 @@
-# ============================================================
-# CS579 Final Project — 04_citywide_acs_maps.R
-# Citywide ACS Maps for socio-economic variables
-# ============================================================
+# 04_citywide_acs_maps.R
 
 library(sf)
 library(dplyr)
@@ -11,9 +8,7 @@ library(readr)
 
 sf_use_s2(TRUE)
 
-# ------------------------------------------------------------
 # 1. Load cleaned dataset (BG-level, all Chicago)
-# ------------------------------------------------------------
 clean_path <- file.path("data", "clean_data", "CA_ALL_clean.rds")
 bg <- read_rds(clean_path)
 
@@ -23,9 +18,7 @@ stopifnot("GEOID" %in% names(bg))
 OUT_DIR <- file.path("results", "figures", "citywide_acs")
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 
-# ------------------------------------------------------------
-# 2. Variables to plot (must exist in cleaned dataset)
-# ------------------------------------------------------------
+# 2. Variables to plot
 var_list <- c(
   "PctWhite", "PctBlack", "PctHisp",
   "PctCollege",
@@ -49,9 +42,7 @@ pretty_names <- c(
   PctRenter = "% Renter-Occupied"
 )
 
-# ------------------------------------------------------------
 # 3. Plotting function
-# ------------------------------------------------------------
 plot_var <- function(data, var, pretty_title, out_path) {
   gg <- ggplot(data) +
     geom_sf(aes(fill = .data[[var]]), color = NA) +
@@ -77,9 +68,7 @@ plot_var <- function(data, var, pretty_title, out_path) {
   ggsave(out_path, gg, width = 9, height = 6.5, dpi = 200)
 }
 
-# ------------------------------------------------------------
 # 4. Loop through variables and generate maps
-# ------------------------------------------------------------
 for (v in var_list) {
   if (!(v %in% names(bg))) {
     message("⚠️ Skipping ", v, " — not found in dataset.")
@@ -91,4 +80,4 @@ for (v in var_list) {
   message("Saved: ", outfile)
 }
 
-message("✅ All citywide ACS maps generated at: ", OUT_DIR)
+message("All citywide ACS maps generated at: ", OUT_DIR)
