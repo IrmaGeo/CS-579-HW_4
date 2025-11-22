@@ -1,4 +1,6 @@
-# 02_pull_acs_eda_select.R
+# CS579 Final Project — 02_clean_select_variables.R
+# City-wide ACS pull + feature selection & scaling
+# UPDATED: Now includes Poverty & Unemployment variables so separate pull isn't needed later.
 
 options(tigris_use_cache = TRUE, scipen = 999)
 
@@ -15,224 +17,242 @@ suppressPackageStartupMessages({
   library(tibble)
 })
 
-# 0) Parameters & paths
-MY_CA_NUM  <- "30"
-ACS_YEAR   <- 2022     # 2018–2022 ACS
-GEO_DIR    <- "data/geo_scaffold"
-OUT_EXP    <- "data/temp"
-OUT_CLEAN  <- "data/clean_data"
+sf_use_s2(TRUE)
 
-dir.create(OUT_EXP,   showWarnings = FALSE, recursive = TRUE)
-dir.create(OUT_CLEAN, showWarnings = FALSE, recursive = TRUE)
+# -------------------------------------------------------------------
+# 0) Parameters & Directory Structure
+# -------------------------------------------------------------------
 
-# 1) Load the scaffold (from step 01)
+ACS_YEAR <- 2022  # 2018–2022 ACS (5-year)
 
-bg_target_gpkg <- file.path(GEO_DIR, paste0("bg_target_CA_", MY_CA_NUM, ".gpkg"))
-if (!file.exists(bg_target_gpkg)) {
-  stop("Scaffold not found: ", bg_target_gpkg,
-       "\nRun scripts/01_ingest_only.R first.")
+DATA_DIR      <- "data"
+TEMP_DIR      <- file.path(DATA_DIR, "temp")
+CLEAN_DIR     <- file.path(DATA_DIR, "clean_data")
+RAW_DIR       <- file.path(DATA_DIR, "raw")   # for shapefiles if you copy them later
+
+dir.create(DATA_DIR,  showWarnings = FALSE)
+dir.create(TEMP_DIR,  showWarnings = FALSE)
+dir.create(CLEAN_DIR, showWarnings = FALSE)
+
+# 🔥 UPDATE THIS once you store shapefile inside your project:
+CA_SHAPE_PATH <- "/Users/irmamodzgvrishvili/Desktop/Education/Illinois/Fall25/CS579/Assignement_4/Boundaries - Community Areas_20251024"
+
+# -------------------------------------------------------------------
+# 1) Load Chicago Community Areas
+# -------------------------------------------------------------------
+
+chi_ca_sf <- st_read(CA_SHAPE_PATH, quiet = TRUE) |>
+  st_transform(4326) |>
+  select(area_numbe, community) |>
+  mutate(
+    area_numbe = as.character(area_numbe),
+    community  = as.character(community)
+  )
+
+stopifnot(all(c("area_numbe","community") %in% names(chi_ca_sf)))
+message("Loaded ", nrow(chi_ca_sf), " Chicago Community Areas.")
+
+# Helper: assign each BG to a CA using centroid join
+assign_to_ca <- function(sf_layer, ca_sf) {
+  local_crs <- 26916  # UTM Chicago
+  pts       <- st_transform(sf_layer, local_crs) |> st_point_on_surface()
+  ca_proj   <- st_transform(ca_sf, local_crs)
+
+  join_df <- st_join(pts, ca_proj, join = st_intersects)
+
+  tibble(
+    GEOID     = sf_layer$GEOID,
+    CA_Number = join_df$area_numbe,
+    CA_Name   = join_df$community
+  )
 }
 
-bg_target_sf <- st_read(bg_target_gpkg, quiet = TRUE) %>% st_transform(4326)
-bg_geoids    <- bg_target_sf$GEOID
-message("Loaded scaffold with ", length(bg_geoids), " BGs (CA ", MY_CA_NUM, " + neighbors).")
+# -------------------------------------------------------------------
+# 2) Pull ACS Citywide Block-Group Data
+# -------------------------------------------------------------------
 
-# 2) Pull a broad ACS set
-acs_vars_broad <- c(
-  TotalPop    = "B01003_001",
-  MedHHI      = "B19013_001",
-  MedRent     = "B25064_001",
-  TotalHU     = "B25003_001",
-  OwnerOcc    = "B25003_002",
-  RenterOcc   = "B25003_003",
-  Age25Total  = "B15003_001",
-  BachPlus    = "B15003_022",
-  Black       = "B03002_004",
-  Hisp        = "B03002_012",
-  White       = "B03002_003"
+acs_vars <- c(
+  TotalPop   = "B01003_001",
+  MedHHI     = "B19013_001",
+  MedRent    = "B25064_001",
+  TotalHU    = "B25003_001",
+  OwnerOcc   = "B25003_002",
+  RenterOcc  = "B25003_003",
+  Age25Total = "B15003_001",
+  BachPlus   = "B15003_022",
+  Black      = "B03002_004",
+  Hisp       = "B03002_012",
+  White      = "B03002_003",
+  # --- ADDED VARIABLES (Poverty & Unemployment) ---
+  PovUniverse = "B17021_001",   # Universe: Population for whom poverty status is determined
+  PovBelow    = "B17021_002",   # Income in the past 12 months below poverty level
+  LaborForce  = "B23025_003",   # In civilian labor force
+  Unemployed  = "B23025_005"    # Unemployed
 )
 
-acs_bg <- get_acs(
+message("Requesting ACS ", ACS_YEAR, " block-group data...")
+acs_bg_all <- get_acs(
   geography = "block group",
-  variables = acs_vars_broad,
-  state = "IL", county = "Cook",
-  year = ACS_YEAR, output = "wide", geometry = TRUE
-) %>%
-  st_transform(4326) %>%
-  filter(GEOID %in% bg_geoids)
+  variables = acs_vars,
+  state = "IL",
+  county = "Cook",
+  year = ACS_YEAR,
+  output = "wide",
+  geometry = TRUE
+) |> st_transform(4326)
 
-# 3) Attach CA labels from scaffold
-acs_bg <- acs_bg %>%
-  left_join(
-    bg_target_sf %>% st_drop_geometry() %>% select(GEOID, CA_Number, CA_Name),
-    by = "GEOID"
-  )
+message("Pulled ", nrow(acs_bg_all), " BGs (Cook County).")
 
-# 4) Derived indicators (exploration stage)
+# -------------------------------------------------------------------
+# 3) Keep only BGs whose centroid lies inside Chicago
+# -------------------------------------------------------------------
 
-acs_ind <- acs_bg %>%
+labs <- assign_to_ca(acs_bg_all, chi_ca_sf)
+
+acs_bg <- acs_bg_all |>
+  left_join(labs, by = "GEOID") |>
+  filter(!is.na(CA_Number))
+
+message("Kept ", nrow(acs_bg), " BGs inside Chicago.")
+
+# -------------------------------------------------------------------
+# 4) Derived Indicators (your core variables)
+# -------------------------------------------------------------------
+
+acs_ind <- acs_bg |>
   mutate(
-    TotalPopE    = TotalPopE,
-    MedHHIE      = MedHHIE,
-    MedRentE     = MedRentE,
-    TotalHUE     = TotalHUE,
-    OwnerOccE    = OwnerOccE,
-    RenterOccE   = RenterOccE,
-    Age25TotalE  = Age25TotalE,
-    BachPlusE    = BachPlusE,
-    BlackE       = BlackE,
-    HispE        = HispE,
-    WhiteE       = WhiteE,
-
-    # Ratios (guard denominators)
-    PctRenter    = if_else(TotalHUE     > 0, RenterOccE / TotalHUE, NA_real_),
-    PctOwner     = if_else(TotalHUE     > 0, OwnerOccE  / TotalHUE, NA_real_),
-    PctCollege   = if_else(Age25TotalE  > 0, BachPlusE  / Age25TotalE, NA_real_),
-    PctBlack     = if_else(TotalPopE    > 0, BlackE     / TotalPopE,   NA_real_),
-    PctHisp      = if_else(TotalPopE    > 0, HispE      / TotalPopE,   NA_real_),
-    PctWhite     = if_else(TotalPopE    > 0, WhiteE     / TotalPopE,   NA_real_)
+    PctRenter  = if_else(TotalHUE    > 0, RenterOccE / TotalHUE, NA_real_),
+    PctOwner   = if_else(TotalHUE    > 0, OwnerOccE  / TotalHUE, NA_real_),
+    PctCollege = if_else(Age25TotalE > 0, BachPlusE  / Age25TotalE, NA_real_),
+    PctBlack   = if_else(TotalPopE   > 0, BlackE     / TotalPopE, NA_real_),
+    PctHisp    = if_else(TotalPopE   > 0, HispE      / TotalPopE, NA_real_),
+    PctWhite   = if_else(TotalPopE   > 0, WhiteE     / TotalPopE, NA_real_),
+    # --- ADDED INDICATORS ---
+    PctPoverty       = if_else(PovUniverseE > 0, PovBelowE   / PovUniverseE, NA_real_),
+    UnemploymentRate = if_else(LaborForceE  > 0, UnemployedE / LaborForceE,  NA_real_)
   )
 
-# 5) EDA: missingness, variation, correlation
+# -------------------------------------------------------------------
+# 5) EDA of Candidate Variables
+# -------------------------------------------------------------------
 
-cand_vars <- c("MedHHIE","MedRentE","PctRenter","PctOwner","PctCollege","PctBlack","PctHisp","PctWhite")
+cand_vars <- c(
+  "MedHHIE","MedRentE",
+  "PctRenter","PctCollege",
+  "PctBlack","PctHisp","PctWhite"
+)
 
-eda_df <- acs_ind %>% st_drop_geometry() %>%
-  select(GEOID, CA_Number, all_of(cand_vars))
+eda_df <- acs_ind |> st_drop_geometry() |> select(GEOID, CA_Number, all_of(cand_vars))
 
 # Missingness
-miss_tbl <- eda_df %>%
-  summarise(across(all_of(cand_vars), ~ mean(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "na_rate") %>%
-  arrange(na_rate)
+miss_tbl <- eda_df |>
+  summarise(across(all_of(cand_vars), ~ mean(is.na(.)))) |>
+  pivot_longer(everything()) |>
+  arrange(value)
 
-# Variation
-var_tbl <- eda_df %>%
-  summarise(
-    MedHHIE_sd    = sd(MedHHIE, na.rm = TRUE),
-    MedRentE_sd   = sd(MedRentE, na.rm = TRUE),
-    PctRenter_sd  = sd(PctRenter, na.rm = TRUE),
-    PctOwner_sd   = sd(PctOwner, na.rm = TRUE),
-    PctCollege_sd = sd(PctCollege, na.rm = TRUE),
-    PctBlack_sd   = sd(PctBlack, na.rm = TRUE),
-    PctHisp_sd    = sd(PctHisp, na.rm = TRUE),
-    PctWhite_sd   = sd(PctWhite, na.rm = TRUE)
-  ) %>%
-  pivot_longer(everything(), names_to = "metric", values_to = "sd")
+write_csv(miss_tbl, file.path(TEMP_DIR, "missingness_citywide.csv"))
 
-# Correlation
-cor_mat <- eda_df %>%
-  select(all_of(cand_vars)) %>%
-  cor(use = "pairwise.complete.obs")
+# Variance table
+var_tbl <- eda_df |>
+  summarise(across(all_of(cand_vars), sd, na.rm=TRUE)) |>
+  pivot_longer(everything(), names_to="var", values_to="sd")
 
-# Save EDA outputs
-write_csv(miss_tbl, file.path(OUT_EXP, paste0("eda_missingness_CA_", MY_CA_NUM, ".csv")))
-write_csv(var_tbl,  file.path(OUT_EXP, paste0("eda_variation_CA_",  MY_CA_NUM, ".csv")))
-write_csv(as.data.frame(cor_mat) %>% rownames_to_column("var"),
-          file.path(OUT_EXP, paste0("eda_correlations_CA_", MY_CA_NUM, ".csv")))
+write_csv(var_tbl, file.path(TEMP_DIR, "variation_citywide.csv"))
 
-# 6) Auto-pick 6 variables (greedy, low-missing, diverse, low |r|)
-pick_order <- c("MedHHIE","MedRentE","PctCollege","PctRenter","PctBlack","PctHisp","PctOwner","PctWhite")
+# Correlation matrix
+cor_mat <- eda_df |> select(all_of(cand_vars)) |> cor(use="pairwise.complete.obs")
+write_csv(as.data.frame(cor_mat), file.path(TEMP_DIR, "correlation_citywide.csv"))
 
-ok_vars <- miss_tbl %>% filter(na_rate <= 0.10) %>% pull(variable)
+# -------------------------------------------------------------------
+# 6) Auto-select 6 Variables (your HW4 logic)
+# -------------------------------------------------------------------
 
-is_acceptable <- function(var, chosen, cor_mat, thr = 0.80) {
-  if (length(chosen) == 0) return(TRUE)
-  all(abs(cor_mat[var, chosen]) < thr | is.na(cor_mat[var, chosen]))
-}
+pick_order <- c("MedHHIE","MedRentE","PctCollege","PctRenter","PctBlack","PctHisp","PctWhite")
+
+ok_vars <- miss_tbl |> filter(value <= 0.10) |> pull(name)
 
 chosen <- character(0)
 for (v in pick_order) {
-  if (v %in% ok_vars && is_acceptable(v, chosen, cor_mat, thr = 0.80)) {
+  if (v %in% ok_vars && all(abs(cor_mat[v, chosen]) < 0.80)) {
     chosen <- c(chosen, v)
   }
   if (length(chosen) == 6) break
 }
 
-# Fallback fill if needed
-if (length(chosen) < 6) {
-  sd_lookup <- sapply(cand_vars, function(nm) sd(eda_df[[nm]], na.rm = TRUE))
-  remaining <- setdiff(ok_vars, chosen)
-  remaining <- remaining[order(
-    miss_tbl$na_rate[match(remaining, miss_tbl$variable)],
-    -sd_lookup[remaining]
-  )]
-  for (v in remaining) {
-    if (is_acceptable(v, chosen, cor_mat, thr = 0.80)) {
-      chosen <- c(chosen, v)
-    }
-    if (length(chosen) == 6) break
-  }
-}
+message("Auto-selected variables: ", paste(chosen, collapse=", "))
+write_lines(chosen, file.path(CLEAN_DIR, "selected_vars_citywide.txt"))
 
-message("Auto-selected variables: ", paste(chosen, collapse = ", "))
-write_lines(chosen, file.path(OUT_CLEAN, paste0("selected_vars_CA_", MY_CA_NUM, ".txt")))
+# -------------------------------------------------------------------
+# 7) Drop incomplete BGs + scale
+# -------------------------------------------------------------------
 
-# 7) drop incomplete BGs before scaling
-model_ready <- acs_ind %>%
-  select(GEOID, CA_Number, CA_Name, geometry, all_of(chosen))
+# We keep 'chosen' vars for modeling, PLUS the new map variables for visualization
+# even if they aren't used in the k-NN model.
+extra_map_vars <- c("PctPoverty", "UnemploymentRate")
+# Only keep columns that actually exist (in case calculation failed)
+extra_map_vars <- intersect(extra_map_vars, names(acs_ind))
 
-# Log + drop rows with any NA in chosen vars
-dropped <- model_ready %>%
-  st_drop_geometry() %>%
-  filter(if_any(all_of(chosen), is.na))
+model_ready <- acs_ind |>
+  select(GEOID, CA_Number, CA_Name, geometry, all_of(chosen), all_of(extra_map_vars))
 
+# Drop BGs with NA in the *chosen modeling variables* only
+dropped <- model_ready |> st_drop_geometry() |> filter(if_any(all_of(chosen), is.na))
 if (nrow(dropped) > 0) {
-  write_csv(dropped, file.path(OUT_CLEAN, paste0("dropped_BG_missing_CA_", MY_CA_NUM, ".csv")))
-  message("Dropped ", nrow(dropped), " BGs with missing values (logged to dropped_BG_missing_*.csv).")
+  write_csv(dropped, file.path(CLEAN_DIR, "dropped_BG_missing.csv"))
+  message("Dropped ", nrow(dropped), " BGs with missing values in modeling variables.")
 }
 
-model_ready <- model_ready %>%
-  filter(if_all(all_of(chosen), ~ !is.na(.)))
+model_ready <- model_ready |> filter(if_all(all_of(chosen), ~ !is.na(.)))
 
-# Scale z-scores AFTER dropping NAs
-scaled_mat <- model_ready %>%
-  st_drop_geometry() %>%
-  select(all_of(chosen)) %>%
-  scale() %>%
+# Scale ONLY the modeling variables
+scaled <- model_ready |>
+  st_drop_geometry() |>
+  select(all_of(chosen)) |>
+  scale() |>
   as.data.frame()
-colnames(scaled_mat) <- paste0(colnames(scaled_mat), "_Z")
 
-final_sf <- bind_cols(model_ready, scaled_mat) %>% st_as_sf()
+colnames(scaled) <- paste0(colnames(scaled), "_Z")
 
-# Sanity: ensure no NA in chosen vars
-stopifnot(all(colSums(is.na(final_sf %>% st_drop_geometry() %>% select(all_of(chosen)))) == 0))
+final_sf <- bind_cols(model_ready, scaled) |> st_as_sf()
 
-# 8) Save clean model-ready dataset
-out_rds <- file.path(OUT_CLEAN, paste0("CA_", MY_CA_NUM, "_clean.rds"))
-write_rds(final_sf, out_rds)
-final_sf %>% st_drop_geometry() %>%
-  write_csv(file.path(OUT_CLEAN, paste0("CA_", MY_CA_NUM, "_clean_no_geom.csv")))
-message("✅ Saved model-ready dataset (complete cases only): ", out_rds)
+# -------------------------------------------------------------------
+# 8) Save Outputs
+# -------------------------------------------------------------------
 
-# 9) quick EDA plots of chosen set
-long_df <- final_sf %>% st_drop_geometry() %>%
-  select(all_of(chosen)) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "value")
+save_rds_path <- file.path(CLEAN_DIR, "CA_ALL_clean.rds")
+write_rds(final_sf, save_rds_path)
 
-p_hist <- ggplot(long_df, aes(x = value)) +
-  geom_histogram(bins = 30, alpha = 0.9) +
-  facet_wrap(~ variable, scales = "free") +
-  labs(title = paste0("CA ", MY_CA_NUM, " + neighbors — Distributions of chosen variables (", ACS_YEAR, ")"),
-       x = NULL, y = "Count") +
+write_csv(
+  final_sf |> st_drop_geometry(),
+  file.path(CLEAN_DIR, "CA_ALL_clean_no_geom.csv")
+)
+
+message("✅ Saved clean dataset: ", save_rds_path)
+
+# -------------------------------------------------------------------
+# 9) Quick EDA Plots
+# -------------------------------------------------------------------
+
+long_df <- final_sf |> st_drop_geometry() |> select(all_of(chosen)) |>
+  pivot_longer(everything())
+
+p_hist <- ggplot(long_df, aes(value)) +
+  geom_histogram(bins=30) +
+  facet_wrap(~name, scales="free") +
   theme_minimal()
 
-ggsave(file.path(OUT_EXP, paste0("chosen_vars_hist_CA_", MY_CA_NUM, ".png")),
-       p_hist, width = 9, height = 6, dpi = 150)
+ggsave(file.path(TEMP_DIR, "chosen_vars_hist.png"), p_hist, width=8, height=6)
 
-chosen_cor <- final_sf %>% st_drop_geometry() %>% select(all_of(chosen)) %>%
-  cor(use = "pairwise.complete.obs")
-cor_df <- melt(chosen_cor, varnames = c("x","y"), value.name = "r")
+cor_df <- melt(cor(final_sf |> st_drop_geometry() |> select(all_of(chosen))))
+colnames(cor_df) <- c("x","y","r")
 
-p_cor <- ggplot(cor_df, aes(x, y, fill = r)) +
+p_cor <- ggplot(cor_df, aes(x,y,fill=r)) +
   geom_tile() +
-  geom_text(aes(label = round(r, 2)), size = 3) +
-  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", limits = c(-1,1)) +
-  labs(title = "Correlation of chosen variables", x = NULL, y = NULL, fill = "r") +
+  geom_text(aes(label=round(r,2)), size=3) +
+  scale_fill_gradient2(low="#2166AC", high="#B2182B", midpoint=0) +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle=45,hjust=1))
 
-ggsave(file.path(OUT_EXP, paste0("chosen_vars_cor_CA_", MY_CA_NUM, ".png")),
-       p_cor, width = 6.5, height = 5.5, dpi = 150)
+ggsave(file.path(TEMP_DIR, "chosen_vars_correlation.png"), p_cor, width=6, height=5)
 
-message("Saved EDA plots to ", OUT_EXP)
+message("📊 Saved EDA plots.")
